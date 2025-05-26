@@ -511,7 +511,7 @@ APICALL EXPORT PLUGIN_DESCRIPTION_INFO PLUGIN_INIT(HANDLE handle) {
     HyprlandAPI::reloadConfig();
 
     Debug::log(LOG, "[hyprsplit] plugin init");
-    return {"hyprsplit", "split monitor workspaces", "shezdy", "1.0"};
+    return {"hyprsplit-barril", "split monitor workspaces", "shezdy", "1.0"};
 }
 
 APICALL EXPORT void PLUGIN_EXIT() {
