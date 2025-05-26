@@ -13,17 +13,19 @@
 
 using namespace Hyprutils::String;
 
-std::string getWorkspaceOnCurrentMonitor(const std::string& workspace) {
-    if (!g_pCompositor->m_lastMonitor) {
-        Debug::log(ERR, "[hyprsplit] no monitor in getWorkspaceOnCurrentMonitor?");
+std::string getWorkspace(const std::string& workspace, const PHLMONITORREF& monitor)  {
+    if (!monitor) {
+        Debug::log(ERR, "[hyprsplit] no monitor in getWorkspace?");
         return workspace;
     }
 
-    int                wsID          = 1;
-    static auto* const NUMWORKSPACES = (Hyprlang::INT* const*)HyprlandAPI::getConfigValue(PHANDLE, "plugin:hyprsplit:num_workspaces")->getDataStaticPtr();
+    int wsID;
+    static auto* const NUMWORKSPACES =
+        reinterpret_cast<Hyprlang::INT* const*>(HyprlandAPI::getConfigValue(PHANDLE, "plugin:hyprsplit:num_workspaces")->getDataStaticPtr());
 
     if (workspace[0] == '+' || workspace[0] == '-') {
-        const auto PLUSMINUSRESULT = getPlusMinusKeywordResult(workspace, ((g_pCompositor->m_lastMonitor->activeWorkspaceID() - 1) % **NUMWORKSPACES) + 1);
+        const auto PLUSMINUSRESULT =
+            getPlusMinusKeywordResult(workspace, ((monitor->activeWorkspaceID() - 1) % **NUMWORKSPACES) + 1);
 
         if (!PLUSMINUSRESULT.has_value())
             return workspace;
@@ -35,7 +37,7 @@ std::string getWorkspaceOnCurrentMonitor(const std::string& workspace) {
     } else if (isNumber(workspace)) {
         wsID = std::max(std::stoi(workspace), 1);
     } else if (workspace[0] == 'r' && (workspace[1] == '-' || workspace[1] == '+') && isNumber(workspace.substr(2))) {
-        const auto PLUSMINUSRESULT = getPlusMinusKeywordResult(workspace.substr(1), g_pCompositor->m_lastMonitor->activeWorkspaceID());
+        const auto PLUSMINUSRESULT = getPlusMinusKeywordResult(workspace.substr(1), monitor->activeWorkspaceID());
 
         if (!PLUSMINUSRESULT.has_value())
             return workspace;
@@ -49,7 +51,7 @@ std::string getWorkspaceOnCurrentMonitor(const std::string& workspace) {
     } else if (workspace.starts_with("empty")) {
         int i = 0;
         while (++i <= **NUMWORKSPACES) {
-            const int  id         = g_pCompositor->m_lastMonitor->m_id * (**NUMWORKSPACES) + i;
+            const int  id         = monitor->m_id * (**NUMWORKSPACES) + i;
             const auto PWORKSPACE = g_pCompositor->getWorkspaceByID(id);
 
             if (!PWORKSPACE || (PWORKSPACE->getWindows() == 0))
@@ -57,7 +59,7 @@ std::string getWorkspaceOnCurrentMonitor(const std::string& workspace) {
         }
 
         Debug::log(LOG, "[hyprsplit] no empty workspace on monitor");
-        return std::to_string(g_pCompositor->m_lastMonitor->activeWorkspaceID());
+        return std::to_string(monitor->activeWorkspaceID());
     } else {
         return workspace;
     }
@@ -65,7 +67,11 @@ std::string getWorkspaceOnCurrentMonitor(const std::string& workspace) {
     if (wsID > **NUMWORKSPACES)
         wsID = ((wsID - 1) % **NUMWORKSPACES) + 1;
 
-    return std::to_string(g_pCompositor->m_lastMonitor->m_id * (**NUMWORKSPACES) + wsID);
+    return std::to_string(monitor->m_id * (**NUMWORKSPACES) + wsID);
+}
+
+std::string getWorkspaceOnCurrentMonitor(const std::string& workspace) {
+    return getWorkspace(workspace, g_pCompositor->m_lastMonitor);
 }
 
 void ensureGoodWorkspaces() {
@@ -155,10 +161,53 @@ SDispatchResult focusWorkspace(std::string args) {
     static auto* const NUMWORKSPACES = (Hyprlang::INT* const*)HyprlandAPI::getConfigValue(PHANDLE, "plugin:hyprsplit:num_workspaces")->getDataStaticPtr();
     const int          MIN           = PCURRMONITOR->m_id * (**NUMWORKSPACES) + 1;
     const int          MAX           = (PCURRMONITOR->m_id + 1) * (**NUMWORKSPACES);
-    if (PWORKSPACE->monitorID() != PCURRMONITOR->m_id && (WORKSPACEID >= MIN && WORKSPACEID <= MAX)) {
+    if (PWORKSPACE->monitorID() != PCURRMONITOR->m_id &&
+        (WORKSPACEID >= MIN && WORKSPACEID <= MAX)) {
         Debug::log(WARN, "[hyprsplit] focusWorkspace: workspace exists but is on the wrong monitor?");
         ensureGoodWorkspaces();
     }
+    g_pKeybindManager->m_dispatchers["workspace"](PWORKSPACE->getConfigName());
+    return {};
+}
+
+PHLMONITOR& getOtherMonitor() {
+    const auto CURRENT_MONITOR = g_pCompositor->m_lastMonitor;
+    const auto other_monitor_id = CURRENT_MONITOR->m_id == 0 ? 1 : 0;
+
+    return g_pCompositor->m_monitors[other_monitor_id];
+}
+
+SDispatchResult otherMonitorFocusWorkspace(std::string args) {
+    const auto CURRENT_MONITOR = g_pCompositor->m_lastMonitor;
+
+    if (!CURRENT_MONITOR) {
+        Debug::log(ERR, "[hyprsplit] otherMonitorfocusWorkspace: monitor doesn't exist");
+        return {.success = false, .error = "otherMonitorfocusWorkspace: monitor doesn't exist"};
+    }
+
+    // real disgusting hack that will only work on dual monitor setups
+    const int WORKSPACEID = getWorkspaceIDNameFromString(getWorkspace(args, getOtherMonitor())).id;
+
+    if (WORKSPACEID == WORKSPACE_INVALID) {
+        Debug::log(ERR, "[hyprsplit] focusWorkspace: invalid workspace");
+        return {.success = false, .error = "focusWorkspace: invalid workspace"};
+    }
+
+    auto PWORKSPACE = g_pCompositor->getWorkspaceByID(WORKSPACEID);
+    if (!PWORKSPACE) {
+        PWORKSPACE = g_pCompositor->createNewWorkspace(WORKSPACEID, CURRENT_MONITOR->m_id);
+        g_pKeybindManager->m_dispatchers["workspace"](PWORKSPACE->getConfigName());
+        return {};
+    }
+
+    static auto* const NUMWORKSPACES = (Hyprlang::INT* const*)HyprlandAPI::getConfigValue(PHANDLE, "plugin:hyprsplit:num_workspaces")->getDataStaticPtr();
+    const int MIN = CURRENT_MONITOR->m_id * (**NUMWORKSPACES) + 1;
+    const int MAX = (CURRENT_MONITOR->m_id + 1) * (**NUMWORKSPACES);
+    if (PWORKSPACE->monitorID() != CURRENT_MONITOR->m_id && (WORKSPACEID >= MIN && WORKSPACEID <= MAX)) {
+        Debug::log(WARN, "[hyprsplit] focusWorkspace: workspace exists but is on the wrong monitor?");
+        ensureGoodWorkspaces();
+    }
+
     g_pKeybindManager->m_dispatchers["workspace"](PWORKSPACE->getConfigName());
     return {};
 }
@@ -168,6 +217,18 @@ SDispatchResult moveToWorkspace(std::string args) {
         args = getWorkspaceOnCurrentMonitor(args.substr(0, args.find_last_of(','))) + "," + args.substr(args.find_last_of(',') + 1);
     else
         args = getWorkspaceOnCurrentMonitor(args);
+
+    g_pKeybindManager->m_dispatchers["movetoworkspace"](args);
+    return {};
+}
+
+SDispatchResult otherMonitorMoveToWorkspace(std::string args) {
+    if (args.contains(',')) {
+        const auto workspace = getWorkspace(args.substr(0, args.find_last_of(',')), getOtherMonitor());
+        args = workspace + "," + args.substr(args.find_last_of(',') + 1);
+    } else {
+        args = getWorkspace(args, getOtherMonitor());
+    }
 
     g_pKeybindManager->m_dispatchers["movetoworkspace"](args);
     return {};
@@ -435,6 +496,10 @@ APICALL EXPORT PLUGIN_DESCRIPTION_INFO PLUGIN_INIT(HANDLE handle) {
     HyprlandAPI::addDispatcherV2(PHANDLE, "split:movetoworkspacesilent", moveToWorkspaceSilent);
     HyprlandAPI::addDispatcherV2(PHANDLE, "split:swapactiveworkspaces", swapActiveWorkspaces);
     HyprlandAPI::addDispatcherV2(PHANDLE, "split:grabroguewindows", grabRogueWindows);
+
+    // barril additions
+    HyprlandAPI::addDispatcherV2(PHANDLE, "split:other_monitor_workspace", otherMonitorFocusWorkspace);
+    HyprlandAPI::addDispatcherV2(PHANDLE, "split:other_monitor_movetoworkspace", otherMonitorMoveToWorkspace);
 
     static auto monitorAddedHook =
         HyprlandAPI::registerCallbackDynamic(PHANDLE, "monitorAdded", [&](void* self, SCallbackInfo& info, std::any data) { onMonitorAdded(std::any_cast<PHLMONITOR>(data)); });
