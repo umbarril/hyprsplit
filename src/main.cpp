@@ -109,10 +109,8 @@ void ensureGoodWorkspaces() {
         const int  MIN = m->m_id * (**NUMWORKSPACES) + 1;
         const int  MAX = (m->m_id + 1) * (**NUMWORKSPACES);
 
-        const auto WSSIZE = g_pCompositor->m_workspaces.size();
-        for (size_t i = 0; i < WSSIZE; i++) {
-            const auto& ws = g_pCompositor->m_workspaces[i];
-            if (!valid(ws))
+        for (const auto& ws : g_pCompositor->getWorkspaces()) {
+            if (!valid(ws.lock()))
                 continue;
 
             if (!**PERSISTENT || !g_pCompositor->getMonitorFromID((ws->m_id - 1) / **NUMWORKSPACES))
@@ -120,7 +118,8 @@ void ensureGoodWorkspaces() {
 
             if (ws->monitorID() != m->m_id && ws->m_id >= MIN && ws->m_id <= MAX) {
                 Debug::log(LOG, "[hyprsplit] workspace {} on monitor {} move to {} {}", ws->m_id, ws->monitorID(), m->m_name, m->m_id);
-                g_pCompositor->moveWorkspaceToMonitor(ws, m);
+                const auto& w = g_pCompositor->getWorkspaceByID(ws->m_id);
+                g_pCompositor->moveWorkspaceToMonitor(w, m);
             }
         }
 
@@ -267,7 +266,7 @@ SDispatchResult swapActiveWorkspaces(std::string args) {
     if (LAYOUTNAME == "dwindle" || LAYOUTNAME == "master" || LAYOUTNAME == "hy3") {
         // proceed as Hyprland normally would (see CCompositor::swapActiveWorkspaces)
         PWORKSPACEA->m_monitor = PMON2;
-        PWORKSPACEA->moveToMonitor(PMON2->m_id);
+        PWORKSPACEA->m_events.monitorChanged.emit();
 
         for (auto& w :g_pCompositor->m_windows) {
             if (w->m_workspace == PWORKSPACEA) {
@@ -292,7 +291,7 @@ SDispatchResult swapActiveWorkspaces(std::string args) {
         }
 
         PWORKSPACEB->m_monitor = PMON1;
-        PWORKSPACEB->moveToMonitor(PMON1->m_id);
+        PWORKSPACEB->m_events.monitorChanged.emit();
 
         for (auto& w :g_pCompositor->m_windows) {
             if (w->m_workspace == PWORKSPACEB) {
@@ -453,10 +452,8 @@ void onMonitorRemoved(PHLMONITOR pMonitor) {
         const int  MIN = pMonitor->m_id * (**NUMWORKSPACES) + 1;
         const int  MAX = (pMonitor->m_id + 1) * (**NUMWORKSPACES);
 
-        const auto WSSIZE = g_pCompositor->m_workspaces.size();
-        for (size_t i = 0; i < WSSIZE; i++) {
-            const auto& ws = g_pCompositor->m_workspaces[i];
-            if (!valid(ws))
+        for (const auto& ws : g_pCompositor->getWorkspaces()) {
+            if (!valid(ws.lock()))
                 continue;
 
             if (ws->m_id >= MIN && ws->m_id <= MAX)
@@ -519,10 +516,8 @@ APICALL EXPORT void PLUGIN_EXIT() {
 
     static auto* const PERSISTENT = (Hyprlang::INT* const*)HyprlandAPI::getConfigValue(PHANDLE, "plugin:hyprsplit:persistent_workspaces")->getDataStaticPtr();
     if (**PERSISTENT) {
-        const auto WSSIZE = g_pCompositor->m_workspaces.size();
-        for (size_t i = 0; i < WSSIZE; i++) {
-            const auto& ws = g_pCompositor->m_workspaces[i];
-            if (!valid(ws))
+        for (const auto& ws : g_pCompositor->getWorkspaces()) {
+            if (!valid(ws.lock()))
                 continue;
             ws->m_persistent = false;
         }
